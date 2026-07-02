@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 import logging
 from fastapi import APIRouter, Depends, Response, status
 from sqlalchemy.orm import Session
@@ -15,36 +16,70 @@ def check_health(
     db: Session = Depends(get_db),
     cache: CacheService = Depends(get_cache),
 ) -> dict:
-    db_ok = False
-    redis_ok = False
+    timestamp = datetime.utcnow().isoformat()
     
-    # Check Database connection
+    # Check Database connection & latency
+    db_status = "connected"
+    db_error = None
+    db_latency = 0.0
     try:
+        start_time = time.time()
         db.execute(text("SELECT 1"))
-        db_ok = True
+        db_latency = round((time.time() - start_time) * 1000, 2)
     except Exception as e:
+        db_status = "disconnected"
+        db_error = str(e)
         logger.error(f"Health check: Database connection failed: {e}")
 
-    # Check Redis connection
+    # Check Redis connection & latency
+    redis_status = "connected"
+    redis_error = None
+    redis_latency = 0.0
     try:
-        redis_ok = cache.ping()
-        if not redis_ok:
-            logger.error("Health check: Redis ping returned False")
+        start_time = time.time()
+        ping_ok = cache.ping()
+        redis_latency = round((time.time() - start_time) * 1000, 2)
+        if not ping_ok:
+            redis_status = "disconnected"
+            redis_error = "Redis ping returned False"
     except Exception as e:
+        redis_status = "disconnected"
+        redis_error = str(e)
         logger.error(f"Health check: Redis connection failed: {e}")
 
+    # Determine overall status
     overall_status = "healthy"
-    if not db_ok or not redis_ok:
-        overall_status = "degraded" if (db_ok or redis_ok) else "unhealthy"
+    if db_status == "disconnected" or redis_status == "disconnected":
+        overall_status = "degraded"
         # Return 503 Service Unavailable if database is down
-        if not db_ok:
+        if db_status == "disconnected":
             response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+
+    checks = {}
+    if db_status == "connected":
+        checks["database"] = {
+            "status": "connected",
+            "latency_ms": db_latency
+        }
+    else:
+        checks["database"] = {
+            "status": "disconnected",
+            "error": db_error or "Unknown database error"
+        }
+
+    if redis_status == "connected":
+        checks["redis"] = {
+            "status": "connected",
+            "latency_ms": redis_latency
+        }
+    else:
+        checks["redis"] = {
+            "status": "disconnected",
+            "error": redis_error or "Unknown cache error"
+        }
 
     return {
         "status": overall_status,
-        "timestamp": time.time(),
-        "services": {
-            "database": "healthy" if db_ok else "unhealthy",
-            "redis": "healthy" if redis_ok else "unhealthy",
-        }
+        "timestamp": timestamp,
+        "checks": checks
     }
