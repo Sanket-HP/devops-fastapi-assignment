@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -7,8 +8,12 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api.v1.router import api_router
-from app.database.base import Base
-from app.database.session import engine
+
+# Import Base from session
+from app.database.session import Base, engine
+
+# Import models so they register with Base.metadata
+import app.database.base
 
 # Setup initial logs to capture startup events
 setup_logging()
