@@ -1,0 +1,133 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: app_postgres
+    restart: always
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: app_redis
+    restart: always
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secure_redis_password_change_me}
+
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:-secure_redis_password_change_me}
+
+    volumes:
+      - redis_data:/data
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "secure_redis_password_change_me",
+          "PING"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: app_fastapi
+    restart: always
+
+    environment:
+      ENV: production
+      APP_NAME: Production FastAPI Backend
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-app_db}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-secure_redis_password_change_me}
+
+      LOG_LEVEL: INFO
+      LOG_DIR: /app/logs
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+    volumes:
+      - app_logs:/app/logs
+
+    networks:
+      - app-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+
+    container_name: app_nginx
+    restart: always
+
+    depends_on:
+      fastapi:
+        condition: service_healthy
+
+    ports:
+      - "80:80"
+
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_logs:
+
+networks:
+  app-network:
+    driver: bridge
