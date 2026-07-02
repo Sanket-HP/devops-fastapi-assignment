@@ -26,10 +26,12 @@ jobs:
           pip install ruff
 
       - name: Run Ruff
-        run: ruff check app/
+        run: |
+          ruff check app/
 
       - name: Test Docker Build
-        run: docker build -t fastapi-test .
+        run: |
+          docker build -t fastapi-test .
 
   deploy:
     name: Deploy to AWS EC2
@@ -39,7 +41,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Deploy via SSH
+      - name: Deploy Application
         uses: appleboy/ssh-action@v1.0.3
 
         with:
@@ -51,27 +53,41 @@ jobs:
           script: |
             set -e
 
+            echo "=================================="
+            echo "Deploying FastAPI Application"
+            echo "=================================="
+
             cd /var/www/devops-fastapi-assignment
 
-            echo "Pull latest code..."
-            git pull origin main
+            echo "Updating repository..."
+            git fetch origin
+            git reset --hard origin/main
 
-            echo "Stopping old containers..."
+            echo "Stopping existing containers..."
             docker compose down --remove-orphans
 
-            echo "Building containers..."
+            echo "Building latest containers..."
             docker compose up -d --build
+
+            echo "Cleaning unused Docker images..."
+            docker image prune -af
 
             echo "Waiting for application..."
             sleep 20
 
+            echo "Checking application health..."
+
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health)
 
             if [ "$STATUS" = "200" ]; then
-              echo "Deployment Successful"
+              echo "Application deployed successfully."
             else
-              echo "Deployment Failed"
+              echo "Deployment failed."
+              docker compose logs --tail=100
               exit 1
             fi
 
+            echo "Running Containers:"
             docker compose ps
+
+            echo "Deployment Completed Successfully."
